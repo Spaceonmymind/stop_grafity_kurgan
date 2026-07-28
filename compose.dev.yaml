@@ -1,0 +1,19 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stop-graffiti-kurgan-bot:dev
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Bot__Token: ${BOT_TOKEN:?BOT_TOKEN is required}
+      Bot__UseLongPolling: "true"
+      Bot__ReviewerChatId: ${REVIEWER_CHAT_ID:-}
+      Bot__WebhookSecret: ""
+      Bot__DataDirectory: /app/data
+    volumes:
+      - bot_dev_data:/app/data
+
+volumes:
+  bot_dev_data:

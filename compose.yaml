@@ -1,0 +1,45 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stop-graffiti-kurgan-bot:latest
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Bot__Token: ${BOT_TOKEN:?BOT_TOKEN is required}
+      Bot__UseLongPolling: "false"
+      Bot__ReviewerChatId: ${REVIEWER_CHAT_ID:-}
+      Bot__WebhookSecret: ${WEBHOOK_SECRET:?WEBHOOK_SECRET is required}
+      Bot__DataDirectory: /app/data
+    volumes:
+      - bot_data:/app/data
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      bot:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  bot_data:
+  caddy_data:
+  caddy_config:

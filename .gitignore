@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+**/data/
+**/appsettings.Local.json
+.env
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,10 @@
+.git
+.github
+.env
+**/bin
+**/obj
+**/data
+**/appsettings.Local.json
+.DS_Store
+README.md
+docs
