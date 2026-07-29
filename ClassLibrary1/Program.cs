@@ -29,9 +29,12 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddHttpClient<MaxApiClient>();
+builder.Services.AddHttpClient<VikaReportClient>();
 builder.Services.AddSingleton<ReportStore>();
+builder.Services.AddSingleton<ReportOutbox>();
 builder.Services.AddSingleton<ConversationService>();
 builder.Services.AddHostedService<LongPollingWorker>();
+builder.Services.AddHostedService<ReportDeliveryWorker>();
 
 var app = builder.Build();
 
@@ -65,6 +68,43 @@ app.MapPost("/webhook", async (
         request.Body,
         cancellationToken: cancellationToken);
     await conversations.ProcessAsync(update.RootElement, cancellationToken);
+    return Results.Ok();
+});
+
+app.MapPost("/internal/report-status", async (
+    HttpRequest request,
+    ReportStatusNotification notification,
+    MaxApiClient max,
+    Microsoft.Extensions.Options.IOptions<BotOptions> options,
+    CancellationToken cancellationToken) =>
+{
+    var expectedToken = options.Value.VikaCallbackToken;
+    var authorization = request.Headers.Authorization.ToString();
+    var providedToken = authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+        ? authorization["Bearer ".Length..]
+        : "";
+
+    if (string.IsNullOrWhiteSpace(expectedToken) ||
+        !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(providedToken),
+            System.Text.Encoding.UTF8.GetBytes(expectedToken)))
+    {
+        return Results.Unauthorized();
+    }
+
+    var text =
+        $"**Статус обращения {notification.ReportId} изменён**\n\n" +
+        $"Новый статус: **{notification.StatusLabel}**" +
+        (string.IsNullOrWhiteSpace(notification.Comment)
+            ? ""
+            : $"\nКомментарий: {notification.Comment}");
+    await max.SendAsync(
+        notification.RecipientId,
+        notification.RecipientIsChat,
+        text,
+        null,
+        cancellationToken);
+
     return Results.Ok();
 });
 

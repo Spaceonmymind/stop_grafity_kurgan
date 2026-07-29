@@ -12,6 +12,9 @@ services:
       Bot__ReviewerChatId: ${REVIEWER_CHAT_ID:-}
       Bot__WebhookSecret: ${WEBHOOK_SECRET:?WEBHOOK_SECRET is required}
       Bot__DataDirectory: /app/data
+      Bot__VikaApiBaseUrl: ${VIKA_API_BASE_URL:?VIKA_API_BASE_URL is required}
+      Bot__VikaApiToken: ${VIKA_API_TOKEN:?VIKA_API_TOKEN is required}
+      Bot__VikaCallbackToken: ${VIKA_CALLBACK_TOKEN:?VIKA_CALLBACK_TOKEN is required}
     volumes:
       - bot_data:/app/data
     labels:
