@@ -17,6 +17,9 @@ WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_EnableDiagnostics=0
 
+COPY certificates/russian_trusted_root_ca.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish .
 RUN mkdir /app/data && chown "$APP_UID:$APP_UID" /app/data
 

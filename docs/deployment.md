@@ -8,6 +8,10 @@
 - Docker Engine с плагином Docker Compose;
 - токен бота MAX.
 
+Docker-образ добавляет официальный корневой сертификат `Russian Trusted Root
+CA` Минцифры в системное хранилище. Это требуется для TLS-подключения к
+`platform-api2.max.ru`.
+
 ## Первый запуск
 
 ```bash
