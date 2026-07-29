@@ -39,8 +39,9 @@ cp .env.example .env
 docker compose -f compose.dev.yaml up --build
 ```
 
-Для production используется `compose.yaml`: приложение запускается за Caddy,
-который получает TLS-сертификат и принимает webhook на порту 443.
+Для production используется `compose.yaml`: приложение подключается к общей
+Docker-сети `vi-common_vi`, а существующий Traefik выпускает TLS-сертификат и
+принимает webhook на порту 443.
 Полная инструкция: [docs/deployment.md](docs/deployment.md).
 
 ## Настройки

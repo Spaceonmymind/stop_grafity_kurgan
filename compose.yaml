@@ -14,32 +14,24 @@ services:
       Bot__DataDirectory: /app/data
     volumes:
       - bot_data:/app/data
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "vi-common_vi"
+      traefik.http.routers.stop-graffiti-kurgan.entrypoints: "http"
+      traefik.http.routers.stop-graffiti-kurgan.rule: "Host(`${DOMAIN:?DOMAIN is required}`)"
+      traefik.http.routers.stop-graffiti-kurgan.middlewares: "redirect-to-https@file"
+      traefik.http.routers.stop-graffiti-kurgan-ssl.entrypoints: "https"
+      traefik.http.routers.stop-graffiti-kurgan-ssl.rule: "Host(`${DOMAIN:?DOMAIN is required}`)"
+      traefik.http.routers.stop-graffiti-kurgan-ssl.tls: "true"
+      traefik.http.routers.stop-graffiti-kurgan-ssl.tls.certresolver: "letsEncrypt"
+      traefik.http.services.stop-graffiti-kurgan.loadbalancer.server.port: "8080"
     networks:
-      - internal
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      bot:
-        condition: service_healthy
-    environment:
-      DOMAIN: ${DOMAIN:?DOMAIN is required}
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - internal
+      - traefik
 
 networks:
-  internal:
+  traefik:
+    external: true
+    name: vi-common_vi
 
 volumes:
   bot_data:
-  caddy_data:
-  caddy_config:
