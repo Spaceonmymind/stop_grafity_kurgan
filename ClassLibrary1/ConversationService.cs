@@ -59,14 +59,17 @@ public sealed class ConversationService
 
             switch (draft.Step)
             {
+                case DraftStep.Intro:
+                    await AcceptIntroAsync(parsed, draft, cancellationToken);
+                    break;
                 case DraftStep.Category:
                     await AcceptCategoryAsync(parsed, draft, cancellationToken);
                     break;
-                case DraftStep.Media:
-                    await AcceptMediaAsync(parsed, draft, cancellationToken);
-                    break;
                 case DraftStep.Address:
                     await AcceptAddressAsync(parsed, draft, cancellationToken);
+                    break;
+                case DraftStep.Media:
+                    await AcceptMediaAsync(parsed, draft, cancellationToken);
                     break;
                 case DraftStep.Comment:
                     await AcceptCommentAsync(parsed, draft, cancellationToken);
@@ -94,16 +97,35 @@ public sealed class ConversationService
             UserId = update.UserId,
             RecipientId = update.RecipientId,
             RecipientIsChat = update.RecipientIsChat,
-            Step = DraftStep.Category
+            Step = DraftStep.Intro
         };
 
         await ReplyAsync(
             update,
-            "**Сообщить о незаконной надписи**\n\nЧто вы обнаружили?",
-            Keyboard(
-                ("Наркограффити", "category:drugs"),
-                ("Запрещенная символика", "category:symbols"),
-                ("Другая надпись", "category:other")),
+            "**Здравствуйте! Это бот «Стоп граффити | Курганская область».**\n\n" +
+            "Здесь можно сообщить о надписях с рекламой наркотиков, запрещенной символике и других незаконных граффити.\n\n" +
+            "Для обращения понадобится указать вид нарушения, адрес и приложить фото или видео. Перед отправкой вы сможете проверить все данные.",
+            Keyboard(("Сообщить о нарушении", "begin_report")),
+            cancellationToken);
+    }
+
+    private async Task AcceptIntroAsync(IncomingUpdate update, Draft draft, CancellationToken cancellationToken)
+    {
+        if (update.CallbackPayload != "begin_report")
+        {
+            await ReplyAsync(
+                update,
+                "Чтобы оформить обращение, нажмите кнопку «Сообщить о нарушении».",
+                Keyboard(("Сообщить о нарушении", "begin_report")),
+                cancellationToken);
+            return;
+        }
+
+        draft.Step = DraftStep.Category;
+        await ReplyAsync(
+            update,
+            "**Шаг 1 из 4. Вид нарушения**\n\nЧто вы обнаружили?",
+            CategoryKeyboard(),
             cancellationToken);
     }
 
@@ -123,49 +145,12 @@ public sealed class ConversationService
             return;
         }
 
-        draft.Step = DraftStep.Media;
-        await ReplyAsync(
-            update,
-            "Пришлите **фото или видео**, на котором надпись хорошо видна. Можно отправить несколько файлов одним сообщением.",
-            CancelKeyboard(),
-            cancellationToken);
-    }
-
-    private async Task AcceptMediaAsync(IncomingUpdate update, Draft draft, CancellationToken cancellationToken)
-    {
-        var media = update.Attachments
-            .Where(item => item.Type is "image" or "video")
-            .ToArray();
-        if (media.Length == 0)
-        {
-            await ReplyAsync(update, "Нужно приложить хотя бы одно фото или видео.", CancelKeyboard(), cancellationToken);
-            return;
-        }
-
-        draft.Media.Clear();
-        draft.Media.AddRange(media);
         draft.Step = DraftStep.Address;
         await ReplyAsync(
             update,
-            "Где находится объект? Отправьте адрес текстом или поделитесь геопозицией.",
-            new[]
-            {
-                new
-                {
-                    type = "inline_keyboard",
-                    payload = new
-                    {
-                        buttons = new object[][]
-                        {
-                            new object[]
-                            {
-                                new { type = "request_geo_location", text = "Отправить геопозицию", quick = true }
-                            },
-                            new object[] { CallbackButton("Отменить", "cancel") }
-                        }
-                    }
-                }
-            },
+            "**Шаг 2 из 4. Адрес**\n\n" +
+            "Где находится объект? Напишите адрес текстом, например: «г. Курган, ул. Ленина, 10», или поделитесь геопозицией.",
+            LocationKeyboard(),
             cancellationToken);
     }
 
@@ -178,14 +163,46 @@ public sealed class ConversationService
 
         if (string.IsNullOrWhiteSpace(draft.Address))
         {
-            await ReplyAsync(update, "Напишите адрес или отправьте геопозицию.", CancelKeyboard(), cancellationToken);
+            await ReplyAsync(
+                update,
+                "Адрес не распознан. Напишите его текстом или отправьте геопозицию.",
+                LocationKeyboard(),
+                cancellationToken);
             return;
         }
 
+        draft.Step = DraftStep.Media;
+        await ReplyAsync(
+            update,
+            "**Шаг 3 из 4. Фото или видео**\n\n" +
+            "Пришлите фотографию или видео, на котором надпись и окружающее место хорошо видны. Можно отправить несколько файлов одним сообщением.",
+            CancelKeyboard(),
+            cancellationToken);
+    }
+
+    private async Task AcceptMediaAsync(IncomingUpdate update, Draft draft, CancellationToken cancellationToken)
+    {
+        var media = update.Attachments
+            .Where(item => item.Type is "image" or "video")
+            .ToArray();
+        if (media.Length == 0)
+        {
+            await ReplyAsync(
+                update,
+                "Фото или видео не найдено. Прикрепите хотя бы один файл.",
+                CancelKeyboard(),
+                cancellationToken);
+            return;
+        }
+
+        draft.Media.Clear();
+        draft.Media.AddRange(media);
         draft.Step = DraftStep.Comment;
         await ReplyAsync(
             update,
-            "Добавьте ориентир или комментарий для исполнителя. Если уточнений нет, нажмите «Пропустить».",
+            "**Шаг 4 из 4. Комментарий**\n\n" +
+            $"Фото/видео получено: {media.Length}.\n" +
+            "Добавьте ориентир или пояснение для исполнителя. Если уточнений нет, нажмите «Пропустить».",
             Keyboard(("Пропустить", "skip_comment"), ("Отменить", "cancel")),
             cancellationToken);
     }
@@ -238,7 +255,9 @@ public sealed class ConversationService
 
         await ReplyAsync(
             update,
-            $"Спасибо. Обращение **{report.Id}** принято и передано ответственным специалистам.",
+            $"**Спасибо за обращение!**\n\n" +
+            $"Обращение **{report.Id}** зарегистрировано. Информация будет проверена и передана ответственным специалистам.\n\n" +
+            "Сохраните номер обращения.",
             Keyboard(("Новое обращение", "new")),
             cancellationToken);
 
@@ -281,6 +300,26 @@ public sealed class ConversationService
 
     private static object[] CancelKeyboard() => Keyboard(("Отменить", "cancel"));
 
+    private static object[] LocationKeyboard() =>
+        new object[]
+        {
+            new
+            {
+                type = "inline_keyboard",
+                payload = new
+                {
+                    buttons = new object[][]
+                    {
+                        new object[]
+                        {
+                            new { type = "request_geo_location", text = "Отправить геопозицию", quick = true }
+                        },
+                        new object[] { CallbackButton("Отменить", "cancel") }
+                    }
+                }
+            }
+        };
+
     private static object[] Keyboard(params (string Text, string Payload)[] buttons) =>
         new object[]
         {
@@ -301,9 +340,10 @@ public sealed class ConversationService
 
     private enum DraftStep
     {
+        Intro,
         Category,
-        Media,
         Address,
+        Media,
         Comment,
         Confirm
     }
