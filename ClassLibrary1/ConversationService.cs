@@ -7,6 +7,7 @@ namespace StopGraffitiKurganBot;
 public sealed class ConversationService
 {
     private readonly ConcurrentDictionary<long, Draft> _drafts = new();
+    private readonly ConcurrentDictionary<long, long> _recentStarts = new();
     private readonly MaxApiClient _api;
     private readonly ReportStore _store;
     private readonly BotOptions _options;
@@ -35,10 +36,35 @@ public sealed class ConversationService
 
         try
         {
-            if (parsed.Type == "bot_started" ||
-                IsCommand(parsed.Text, "/start") ||
-                IsCommand(parsed.Text, "/new") ||
-                parsed.CallbackPayload == "new")
+            var isBotStarted = parsed.Type == "bot_started";
+            var isStartCommand = IsCommand(parsed.Text, "/start");
+            var isNewRequest = IsCommand(parsed.Text, "/new") || parsed.CallbackPayload == "new";
+
+            if (isBotStarted)
+            {
+                // MAX can deliver bot_started together with /start and retry it later.
+                // Never let that service event reset a conversation already in progress.
+                if (_drafts.ContainsKey(parsed.UserId) || !TryReserveStart(parsed.UserId))
+                {
+                    return;
+                }
+
+                await StartAsync(parsed, cancellationToken);
+                return;
+            }
+
+            if (isStartCommand)
+            {
+                if (!TryReserveStart(parsed.UserId))
+                {
+                    return;
+                }
+
+                await StartAsync(parsed, cancellationToken);
+                return;
+            }
+
+            if (isNewRequest)
             {
                 await StartAsync(parsed, cancellationToken);
                 return;
@@ -183,7 +209,7 @@ public sealed class ConversationService
     private async Task AcceptMediaAsync(IncomingUpdate update, Draft draft, CancellationToken cancellationToken)
     {
         var media = update.Attachments
-            .Where(item => item.Type is "image" or "video")
+            .Where(item => item.Type is "image" or "video" or "file")
             .ToArray();
         if (media.Length == 0)
         {
@@ -283,6 +309,33 @@ public sealed class ConversationService
 
     private static bool IsCommand(string? text, string command) =>
         string.Equals(text?.Trim(), command, StringComparison.OrdinalIgnoreCase);
+
+    private bool TryReserveStart(long userId)
+    {
+        var now = Environment.TickCount64;
+        while (true)
+        {
+            if (!_recentStarts.TryGetValue(userId, out var previous))
+            {
+                if (_recentStarts.TryAdd(userId, now))
+                {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if (now - previous < TimeSpan.FromSeconds(5).TotalMilliseconds)
+            {
+                return false;
+            }
+
+            if (_recentStarts.TryUpdate(userId, now, previous))
+            {
+                return true;
+            }
+        }
+    }
 
     private static string Summary(Draft draft) =>
         "**Проверьте обращение**\n\n" +
@@ -419,11 +472,14 @@ public sealed class ConversationService
 
             foreach (var item in items.EnumerateArray())
             {
-                var attachmentType = GetString(item, "type");
+                var attachmentType = GetString(item, "type")?.ToLowerInvariant();
                 var payload = TryGet(item, "payload");
-                if (attachmentType is "image" or "video" && payload is not null)
+                if (attachmentType is "image" or "photo" or "video" or "file")
                 {
-                    media.Add(new MediaReference(attachmentType, payload.Value.GetRawText()));
+                    var normalizedType = attachmentType == "photo" ? "image" : attachmentType;
+                    media.Add(new MediaReference(
+                        normalizedType,
+                        (payload ?? item).GetRawText()));
                 }
                 else if (attachmentType == "location" && payload is not null)
                 {
