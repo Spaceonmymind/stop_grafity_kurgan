@@ -8,6 +8,7 @@ public sealed class ConversationService
 {
     private readonly ConcurrentDictionary<long, Draft> _drafts = new();
     private readonly ConcurrentDictionary<long, long> _recentStarts = new();
+    private readonly ConcurrentDictionary<string, long> _processedEvents = new();
     private readonly MaxApiClient _api;
     private readonly ReportStore _store;
     private readonly BotOptions _options;
@@ -34,6 +35,20 @@ public sealed class ConversationService
             return;
         }
 
+        _logger.LogInformation(
+            "Received MAX update {UpdateType}; conversation={ConversationId}; user={UserId}; event={EventId}; attachments=[{AttachmentTypes}]",
+            parsed.Type,
+            parsed.RecipientId,
+            parsed.UserId,
+            parsed.EventId ?? "unknown",
+            string.Join(",", parsed.AttachmentTypes));
+
+        if (!TryReserveEvent(parsed.EventId))
+        {
+            _logger.LogInformation("Ignored duplicate MAX event {EventId}", parsed.EventId);
+            return;
+        }
+
         try
         {
             var isBotStarted = parsed.Type == "bot_started";
@@ -44,7 +59,7 @@ public sealed class ConversationService
             {
                 // MAX can deliver bot_started together with /start and retry it later.
                 // Never let that service event reset a conversation already in progress.
-                if (_drafts.ContainsKey(parsed.UserId) || !TryReserveStart(parsed.UserId))
+                if (_drafts.ContainsKey(parsed.RecipientId) || !TryReserveStart(parsed.RecipientId))
                 {
                     return;
                 }
@@ -55,7 +70,7 @@ public sealed class ConversationService
 
             if (isStartCommand)
             {
-                if (!TryReserveStart(parsed.UserId))
+                if (!TryReserveStart(parsed.RecipientId))
                 {
                     return;
                 }
@@ -72,12 +87,12 @@ public sealed class ConversationService
 
             if (IsCommand(parsed.Text, "/cancel") || parsed.CallbackPayload == "cancel")
             {
-                _drafts.TryRemove(parsed.UserId, out _);
+                _drafts.TryRemove(parsed.RecipientId, out _);
                 await ReplyAsync(parsed, "Заявка отменена. Чтобы начать заново, отправьте /new.", null, cancellationToken);
                 return;
             }
 
-            if (!_drafts.TryGetValue(parsed.UserId, out var draft))
+            if (!_drafts.TryGetValue(parsed.RecipientId, out var draft))
             {
                 await StartAsync(parsed, cancellationToken);
                 return;
@@ -118,7 +133,7 @@ public sealed class ConversationService
 
     private async Task StartAsync(IncomingUpdate update, CancellationToken cancellationToken)
     {
-        _drafts[update.UserId] = new Draft
+        _drafts[update.RecipientId] = new Draft
         {
             UserId = update.UserId,
             RecipientId = update.RecipientId,
@@ -208,7 +223,18 @@ public sealed class ConversationService
 
     private async Task AcceptMediaAsync(IncomingUpdate update, Draft draft, CancellationToken cancellationToken)
     {
-        var media = update.Attachments
+        IReadOnlyList<MediaReference> receivedAttachments = update.Attachments;
+        if (receivedAttachments.Count == 0 && update.MessageId is not null)
+        {
+            using var fullMessage = await _api.GetMessageAsync(update.MessageId, cancellationToken);
+            receivedAttachments = IncomingUpdate.ParseMessageMedia(fullMessage.RootElement);
+            _logger.LogInformation(
+                "Loaded {MediaCount} media attachments from full MAX message {MessageId}",
+                receivedAttachments.Count,
+                update.MessageId);
+        }
+
+        var media = receivedAttachments
             .Where(item => item.Type is "image" or "video" or "file")
             .ToArray();
         if (media.Length == 0)
@@ -277,7 +303,7 @@ public sealed class ConversationService
             draft.Media.ToArray());
 
         await _store.SaveAsync(report, cancellationToken);
-        _drafts.TryRemove(update.UserId, out _);
+        _drafts.TryRemove(update.RecipientId, out _);
 
         await ReplyAsync(
             update,
@@ -310,14 +336,14 @@ public sealed class ConversationService
     private static bool IsCommand(string? text, string command) =>
         string.Equals(text?.Trim(), command, StringComparison.OrdinalIgnoreCase);
 
-    private bool TryReserveStart(long userId)
+    private bool TryReserveStart(long conversationId)
     {
         var now = Environment.TickCount64;
         while (true)
         {
-            if (!_recentStarts.TryGetValue(userId, out var previous))
+            if (!_recentStarts.TryGetValue(conversationId, out var previous))
             {
-                if (_recentStarts.TryAdd(userId, now))
+                if (_recentStarts.TryAdd(conversationId, now))
                 {
                     return true;
                 }
@@ -330,11 +356,36 @@ public sealed class ConversationService
                 return false;
             }
 
-            if (_recentStarts.TryUpdate(userId, now, previous))
+            if (_recentStarts.TryUpdate(conversationId, now, previous))
             {
                 return true;
             }
         }
+    }
+
+    private bool TryReserveEvent(string? eventId)
+    {
+        if (string.IsNullOrWhiteSpace(eventId))
+        {
+            return true;
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!_processedEvents.TryAdd(eventId, now))
+        {
+            return false;
+        }
+
+        if (_processedEvents.Count > 10_000)
+        {
+            var cutoff = now - (long)TimeSpan.FromDays(1).TotalMilliseconds;
+            foreach (var item in _processedEvents.Where(item => item.Value < cutoff))
+            {
+                _processedEvents.TryRemove(item.Key, out _);
+            }
+        }
+
+        return true;
     }
 
     private static string Summary(Draft draft) =>
@@ -420,7 +471,10 @@ public sealed class ConversationService
         bool RecipientIsChat,
         string? Text,
         string? CallbackPayload,
+        string? EventId,
+        string? MessageId,
         IReadOnlyList<MediaReference> Attachments,
+        IReadOnlyList<string> AttachmentTypes,
         (double Latitude, double Longitude)? Location)
     {
         public static IncomingUpdate? Parse(JsonElement root)
@@ -447,6 +501,16 @@ public sealed class ConversationService
             var recipientId = chatId ?? userId.Value;
             var recipientIsChat = chatId is not null;
             var attachments = ParseAttachments(body);
+            var messageId = GetString(body, "mid");
+            var callbackId = GetString(callback, "callback_id");
+            var timestamp = GetInt64(root, "timestamp");
+            var eventId = type switch
+            {
+                "message_created" when messageId is not null => $"message:{messageId}",
+                "message_callback" when callbackId is not null => $"callback:{callbackId}",
+                "bot_started" when timestamp is not null => $"bot_started:{recipientId}:{timestamp}",
+                _ => null
+            };
 
             return new IncomingUpdate(
                 type,
@@ -455,24 +519,35 @@ public sealed class ConversationService
                 recipientIsChat,
                 GetString(body, "text"),
                 GetString(callback, "payload"),
+                eventId,
+                messageId,
                 attachments.Media,
+                attachments.Types,
                 attachments.Location);
         }
 
-        private static (IReadOnlyList<MediaReference> Media, (double, double)? Location) ParseAttachments(JsonElement? body)
+        public static IReadOnlyList<MediaReference> ParseMessageMedia(JsonElement message) =>
+            ParseAttachments(TryGet(message, "body")).Media;
+
+        private static (
+            IReadOnlyList<MediaReference> Media,
+            IReadOnlyList<string> Types,
+            (double, double)? Location) ParseAttachments(JsonElement? body)
         {
             var media = new List<MediaReference>();
+            var types = new List<string>();
             (double, double)? location = null;
             if (body is null ||
                 !body.Value.TryGetProperty("attachments", out var items) ||
                 items.ValueKind != JsonValueKind.Array)
             {
-                return (media, location);
+                return (media, types, location);
             }
 
             foreach (var item in items.EnumerateArray())
             {
                 var attachmentType = GetString(item, "type")?.ToLowerInvariant();
+                types.Add(attachmentType ?? "unknown");
                 var payload = TryGet(item, "payload");
                 if (attachmentType is "image" or "photo" or "video" or "file")
                 {
@@ -492,7 +567,7 @@ public sealed class ConversationService
                 }
             }
 
-            return (media, location);
+            return (media, types, location);
         }
 
         private static JsonElement? TryGet(JsonElement? element, string property)

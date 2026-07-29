@@ -66,6 +66,28 @@ public sealed class MaxApiClient
         }
     }
 
+    public async Task<JsonDocument> GetMessageAsync(string messageId, CancellationToken cancellationToken)
+    {
+        EnsureConfigured();
+        using var request = CreateRequest(
+            HttpMethod.Get,
+            $"messages/{Uri.EscapeDataString(messageId)}");
+        var response = await _http.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        try
+        {
+            await EnsureSuccessAsync(response, cancellationToken);
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
     private HttpRequestMessage CreateRequest(HttpMethod method, string uri, object? body = null)
     {
         var request = new HttpRequestMessage(method, uri);
