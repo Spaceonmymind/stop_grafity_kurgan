@@ -55,6 +55,9 @@ Docker-сети `vi-common_vi`, а существующий Traefik выпуск
 | `Bot__ReviewerChatId` | ID служебного чата, куда приходят новые заявки |
 | `Bot__WebhookSecret` | Секрет проверки заголовка webhook |
 | `Bot__DataDirectory` | Каталог хранения заявок |
+| `Bot__VikaApiBaseUrl` | Базовый URL «Вики» для передачи обращений |
+| `Bot__VikaApiToken` | Общий секрет интеграции с «Викой» |
+| `Bot__VikaCallbackToken` | Секрет обратных уведомлений о статусах |
 
 ## Production
 

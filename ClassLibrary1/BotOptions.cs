@@ -10,4 +10,7 @@ public sealed class BotOptions
     public long? ReviewerChatId { get; init; }
     public string WebhookSecret { get; init; } = "";
     public string DataDirectory { get; init; } = "data";
+    public string VikaApiBaseUrl { get; init; } = "";
+    public string VikaApiToken { get; init; } = "";
+    public string VikaCallbackToken { get; init; } = "";
 }

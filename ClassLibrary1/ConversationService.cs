@@ -11,17 +11,20 @@ public sealed class ConversationService
     private readonly ConcurrentDictionary<string, long> _processedEvents = new();
     private readonly MaxApiClient _api;
     private readonly ReportStore _store;
+    private readonly ReportOutbox _outbox;
     private readonly BotOptions _options;
     private readonly ILogger<ConversationService> _logger;
 
     public ConversationService(
         MaxApiClient api,
         ReportStore store,
+        ReportOutbox outbox,
         IOptions<BotOptions> options,
         ILogger<ConversationService> logger)
     {
         _api = api;
         _store = store;
+        _outbox = outbox;
         _options = options.Value;
         _logger = logger;
     }
@@ -303,6 +306,7 @@ public sealed class ConversationService
             draft.Media.ToArray());
 
         await _store.SaveAsync(report, cancellationToken);
+        await _outbox.EnqueueAsync(report, cancellationToken);
         _drafts.TryRemove(update.RecipientId, out _);
 
         await ReplyAsync(
