@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Options;
 
@@ -33,7 +32,7 @@ public sealed class VikaReportClient
         {
             Content = JsonContent.Create(report)
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.VikaApiToken);
+        request.Headers.Add("X-Stop-Graffiti-Token", _options.VikaApiToken);
 
         using var response = await _http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
